@@ -14,8 +14,29 @@ type RoomLoc struct {
 	Room  RoomID
 }
 
-// RoomRuntime holds mutable dungeon room state (initial layout is in RoomData).
+// RoomRuntime holds mutable per-room state (pickups, door, cleared enemies).
 type RoomRuntime struct {
-	KeyTaken bool
-	DoorOpen bool
+	KeyTaken       bool
+	DoorOpen       bool
+	EnemiesCleared bool
+	// RupeesGone lists map cells where a rupee was collected (base tile was TileRupee).
+	RupeesGone [][2]int
+}
+
+func (rt RoomRuntime) RupeeCollected(r, c int) bool {
+	for _, p := range rt.RupeesGone {
+		if p[0] == r && p[1] == c {
+			return true
+		}
+	}
+	return false
+}
+
+// WithRupeeCollected returns a copy with this rupee cell marked taken (map stores values).
+func (rt RoomRuntime) WithRupeeCollected(r, c int) RoomRuntime {
+	if rt.RupeeCollected(r, c) {
+		return rt
+	}
+	rt.RupeesGone = append(append([][2]int(nil), rt.RupeesGone...), [2]int{r, c})
+	return rt
 }

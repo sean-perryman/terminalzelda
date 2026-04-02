@@ -26,6 +26,7 @@ type Player struct {
 	Row, Col      int
 	Facing        Dir
 	Hearts        int
+	Rupees        int
 	InvulnFrames  int
 	SwordTimer    int
 	SwordCooldown int

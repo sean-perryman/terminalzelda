@@ -32,7 +32,12 @@ func main() {
 	s.SetStyle(tcell.StyleDefault)
 	s.Clear()
 
-	st := game.NewState()
+	st, err := game.LoadGame()
+	if err != nil {
+		st = game.NewState()
+	} else {
+		st.Message = "Continued from save."
+	}
 
 	evCh := make(chan tcell.Event, 64)
 	go func() {
@@ -84,8 +89,12 @@ func handleKey(st *game.State, ev *tcell.EventKey) bool {
 	if ev.Key() == tcell.KeyRune {
 		switch r := ev.Rune(); r {
 		case 'q', 'Q':
+			if err := st.Save(); err != nil {
+				fmt.Fprintf(os.Stderr, "save: %v\n", err)
+			}
 			return true
 		case 'r', 'R':
+			_ = game.DeleteSave()
 			st.Reset()
 			return false
 		}
@@ -116,6 +125,8 @@ func handleKey(st *game.State, ev *tcell.EventKey) bool {
 			st.MovePlayer(game.DirRight)
 		case 'z', 'Z', ' ':
 			st.SwingSword()
+		case 'b', 'B':
+			st.TryBuyHeart()
 		}
 	}
 	return false
@@ -139,6 +150,10 @@ func tileRune(t game.Tile) rune {
 		return '+'
 	case game.TileGoal:
 		return '%'
+	case game.TileRupee:
+		return '$'
+	case game.TileShop:
+		return 'S'
 	default:
 		return '.'
 	}
@@ -198,7 +213,7 @@ func draw(sc tcell.Screen, st *game.State) {
 	p := &st.Player
 	full := p.Hearts / 2
 	half := p.Hearts % 2
-	maxFull := (game.StartingHearts + 1) / 2
+	maxFull := (game.MaxHalfHearts + 1) / 2
 	filled := full
 	if half != 0 {
 		filled++
@@ -213,7 +228,7 @@ func draw(sc tcell.Screen, st *game.State) {
 	for i := 0; i < max(0, maxFull-filled); i++ {
 		hud += "\u00b7"
 	}
-	hud += "  "
+	hud += fmt.Sprintf("  $%d  ", p.Rupees)
 	if p.HasDungeonKey {
 		hud += "[k] "
 	}
@@ -278,6 +293,10 @@ func draw(sc tcell.Screen, st *game.State) {
 				stl = red
 			case game.TileGoal:
 				stl = yellow
+			case game.TileRupee:
+				stl = tcell.StyleDefault.Foreground(tcell.ColorGold)
+			case game.TileShop:
+				stl = tcell.StyleDefault.Foreground(tcell.ColorAqua)
 			}
 			if st.Realm == game.RealmDungeon {
 				switch t {
@@ -297,6 +316,10 @@ func draw(sc tcell.Screen, st *game.State) {
 					stl = red
 				case game.TileGoal:
 					stl = yellow.Bold(true)
+				case game.TileRupee:
+					stl = tcell.StyleDefault.Foreground(tcell.ColorGold)
+				case game.TileShop:
+					stl = tcell.StyleDefault.Foreground(tcell.ColorAqua).Bold(true)
 				}
 			}
 
@@ -339,7 +362,7 @@ func draw(sc tcell.Screen, st *game.State) {
 		}
 	}
 
-	help := " Walk through · edge gaps to leave the screen  |  Z sword  R/Q quit "
+	help := " · = screen edge  |  Z sword  B buy heart on S (" + fmt.Sprint(game.ShopHeartPrice) + " rupees)  |  Q save+quit  R new game "
 	drawString(sc, max(0, (w-len(help))/2), offR+game.RoomInnerH, white, help, w)
 	if st.GameOver {
 		goMsg := " GAME OVER "

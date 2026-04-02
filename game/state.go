@@ -1,6 +1,7 @@
 package game
 
 import (
+	"fmt"
 	"math"
 	"math/rand/v2"
 )
@@ -65,8 +66,11 @@ func (s *State) ensureRoomEntities() {
 		Enemies:     make([]Enemy, 0, len(rd.EnemySpawns)),
 		Projectiles: nil,
 	}
-	for _, sp := range rd.EnemySpawns {
-		re.Enemies = append(re.Enemies, Enemy{Row: sp[0], Col: sp[1], ShootCooldown: 20})
+	rt := s.Runtimes[loc]
+	if !rt.EnemiesCleared {
+		for _, sp := range rd.EnemySpawns {
+			re.Enemies = append(re.Enemies, Enemy{Row: sp[0], Col: sp[1], ShootCooldown: 20})
+		}
 	}
 	s.RoomEntities[loc] = re
 }
@@ -82,11 +86,14 @@ func (s *State) baseTileAt(r, c int) Tile {
 // EffectiveTile is the logical tile after pickups and opened doors (dungeon).
 func (s *State) EffectiveTile(r, c int) Tile {
 	t := s.baseTileAt(r, c)
+	loc := s.roomLoc()
+	rt := s.Runtimes[loc]
+	if t == TileRupee && rt.RupeeCollected(r, c) {
+		return TileFloor
+	}
 	if s.Realm != RealmDungeon {
 		return t
 	}
-	loc := s.roomLoc()
-	rt := s.Runtimes[loc]
 	if t == TileDungeonKey && rt.KeyTaken {
 		return TileFloor
 	}
@@ -172,7 +179,43 @@ func (s *State) afterEnteringTile() {
 		}
 		s.Victory = true
 		s.Message = "You claimed the triforce! Press R to play again."
+	case TileRupee:
+		loc := s.roomLoc()
+		rt := s.Runtimes[loc]
+		if rt.RupeeCollected(r, c) {
+			return
+		}
+		s.Runtimes[loc] = rt.WithRupeeCollected(r, c)
+		p.Rupees++
+		s.Message = "Found a rupee!"
 	}
+}
+
+// TryBuyHeart spends rupees when standing on a shop tile (S). Returns true if a purchase happened.
+func (s *State) TryBuyHeart() bool {
+	if s.GameOver || s.Victory {
+		return false
+	}
+	p := &s.Player
+	if s.baseTileAt(p.Row, p.Col) != TileShop {
+		s.Message = "Stand on the shop (S) and press B to buy."
+		return false
+	}
+	if p.Rupees < ShopHeartPrice {
+		s.Message = fmt.Sprintf("You need %d rupees for a heart.", ShopHeartPrice)
+		return false
+	}
+	if p.Hearts >= MaxHalfHearts {
+		s.Message = "Your hearts are already full."
+		return false
+	}
+	p.Rupees -= ShopHeartPrice
+	p.Hearts += 2
+	if p.Hearts > MaxHalfHearts {
+		p.Hearts = MaxHalfHearts
+	}
+	s.Message = fmt.Sprintf("Bought a heart! (-%d rupees)", ShopHeartPrice)
+	return true
 }
 
 func (s *State) enterDungeon() {
@@ -307,22 +350,35 @@ func (s *State) Update() {
 	}
 
 	re := s.EntitiesHere()
+	rd := s.CurrentRoomData()
+	hadSpawns := len(rd.EnemySpawns) > 0
 	if p.SwordTimer > 0 {
 		hit := make(map[[2]int]struct{})
 		for _, cell := range s.swordCells() {
 			hit[[2]int{cell[0], cell[1]}] = struct{}{}
 		}
+		killed := 0
 		alive := re.Enemies[:0]
 		for i := range re.Enemies {
 			e := re.Enemies[i]
 			if _, ok := hit[[2]int{e.Row, e.Col}]; ok {
-				s.Message = "Enemy defeated!"
+				killed++
 				continue
 			}
 			alive = append(alive, e)
 		}
 		re.Enemies = alive
+		p.Rupees += killed
+		if killed > 0 {
+			s.Message = "Enemy defeated!"
+		}
 		p.SwordTimer--
+		if hadSpawns && len(re.Enemies) == 0 {
+			loc := s.roomLoc()
+			rt := s.Runtimes[loc]
+			rt.EnemiesCleared = true
+			s.Runtimes[loc] = rt
+		}
 	}
 
 	s.updateEnemies(re)

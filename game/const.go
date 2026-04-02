@@ -12,4 +12,8 @@ const (
 	ProjectileSpeed    = 1.0
 
 	StartingHearts = 6
+	// MaxHalfHearts caps heart containers (each ♥ is two half-hearts).
+	MaxHalfHearts = 16
+	// ShopHeartPrice is rupees for +1 full heart (two half-hearts).
+	ShopHeartPrice = 10
 )
