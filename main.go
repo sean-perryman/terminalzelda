@@ -151,6 +151,15 @@ func swordRune(d game.Dir) rune {
 	return '|'
 }
 
+// cellRune is the map glyph; perimeter floor tiles are shown as · (screen exits).
+func cellRune(t game.Tile, r, c int) rune {
+	ch := tileRune(t)
+	if t == game.TileFloor && (r == 0 || r == game.RoomInnerH-1 || c == 0 || c == game.RoomInnerW-1) {
+		return '\u00b7'
+	}
+	return ch
+}
+
 func drawString(sc tcell.Screen, x, y int, st tcell.Style, s string, maxW int) {
 	col := x
 	for _, r := range s {
@@ -252,7 +261,7 @@ func draw(sc tcell.Screen, st *game.State) {
 	for r := 0; r < game.RoomInnerH; r++ {
 		for c := 0; c < game.RoomInnerW; c++ {
 			t := st.EffectiveTile(r, c)
-			ch := tileRune(t)
+			ch := cellRune(t, r, c)
 			stl := green
 			switch t {
 			case game.TileWater:
@@ -294,7 +303,7 @@ func draw(sc tcell.Screen, st *game.State) {
 			x, y := offC+c, offR+r
 			if r == p.Row && c == p.Col {
 				if p.InvulnFrames > 0 && (st.Tick/3)%2 == 0 {
-					ch = tileRune(t)
+					ch = cellRune(t, r, c)
 					stl = dimFloor
 					if st.Realm != game.RealmDungeon {
 						stl = green
@@ -330,7 +339,7 @@ func draw(sc tcell.Screen, st *game.State) {
 		}
 	}
 
-	help := " Arrows/WASD move  Z/Space sword  R restart  Q quit "
+	help := " Walk through · edge gaps to leave the screen  |  Z sword  R/Q quit "
 	drawString(sc, max(0, (w-len(help))/2), offR+game.RoomInnerH, white, help, w)
 	if st.GameOver {
 		goMsg := " GAME OVER "

@@ -1,5 +1,7 @@
 package game
 
+import "bytes"
+
 type Tile int
 
 const (
@@ -98,6 +100,39 @@ func normalizeRoomLines(lines []string) []string {
 				out[r] = string(mid)
 			}
 		}
+	}
+	return out
+}
+
+// applyEdgeExits carves two-tile gaps in the middle of each screen edge so the
+// player can walk off-screen and trigger room transitions (NES-style).
+func applyEdgeExits(lines []string) []string {
+	w, h := RoomInnerW, RoomInnerH
+	midR := h / 2
+	midC := w/2 - 1 // e.g. 17,18 on a 36-wide screen
+	out := make([]string, h)
+	for i := 0; i < h; i++ {
+		if i >= len(lines) {
+			out[i] = string(bytes.Repeat([]byte{'#'}, w))
+			continue
+		}
+		row := lines[i]
+		if len(row) != w {
+			out[i] = row
+			continue
+		}
+		b := append([]byte(nil), row...)
+		switch {
+		case i == 0 || i == h-1:
+			if midC >= 0 && midC+1 < w {
+				b[midC] = '.'
+				b[midC+1] = '.'
+			}
+		case i == midR:
+			b[0] = '.'
+			b[w-1] = '.'
+		}
+		out[i] = string(b)
 	}
 	return out
 }
@@ -258,6 +293,7 @@ func loadRoomMap(raw map[RoomID][]string) map[RoomID]RoomData {
 	world := make(map[RoomID]RoomData, len(raw))
 	for id, lines := range raw {
 		norm := normalizeRoomLines(lines)
+		norm = applyEdgeExits(norm)
 		tiles, spawns := parseRoom(norm)
 		world[id] = RoomData{Tiles: tiles, EnemySpawns: spawns}
 	}
