@@ -1,15 +1,19 @@
 # Terminal Zelda
 
-NES **Zelda**–style overworld in ASCII: screen-by-screen rooms, sword swipes, grumpy `o` things that shoot back. Built for **SSH** and dumb terminals—no GUI, no browser.
+NES **Zelda** vibes in your terminal: linked overworld screens, sword arc, enemies that shoot back. Meant for **SSH**—one binary, no browser, no GUI.
 
 ```bash
-python3 -m terminal_zelda
+go run .
+# or
+go build -o zelda . && ./zelda
 ```
 
-**Moves:** arrows · WASD · HJKL · **Sword:** space or Z · **R** restart · **Q** quit
+**Controls:** arrows · WASD · HJKL · **Z** / space (sword) · **R** restart · **Q** quit · **Ctrl+C** bail
 
-You need a real TTY (e.g. `ssh -t user@host`). Prefer a UTF-8 locale for hearts and bullets. If the window is tiny, widen to about **40×14** or more.
+You need a real TTY (`ssh -t user@host`). UTF-8 locale helps for hearts and bullets. Window about **40×14** or larger.
+
+**Stack:** Go 1.22+, [tcell](https://github.com/gdamore/tcell).
 
 ---
 
-*Fan work—not affiliated with Nintendo. Zelda is theirs.*
+*Fan work—not affiliated with Nintendo.*
