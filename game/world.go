@@ -7,6 +7,11 @@ const (
 	TileWall
 	TileWater
 	TileBush
+	TileStairsDown // overworld: enter dungeon
+	TileStairsUp   // dungeon: return to overworld
+	TileDungeonKey // pickup; then floor
+	TileLockedDoor // blocks until key opens it in this room
+	TileGoal       // triforce — step to win
 )
 
 type RoomID struct {
@@ -19,7 +24,12 @@ type RoomData struct {
 }
 
 func TileBlocksMove(t Tile) bool {
-	return t == TileWall || t == TileWater
+	switch t {
+	case TileWall, TileWater, TileLockedDoor:
+		return true
+	default:
+		return false
+	}
 }
 
 func parseRoom(lines []string) ([][]Tile, [][2]int) {
@@ -38,6 +48,16 @@ func parseRoom(lines []string) ([][]Tile, [][2]int) {
 				out[c] = TileWater
 			case '*':
 				out[c] = TileBush
+			case '>':
+				out[c] = TileStairsDown
+			case '<':
+				out[c] = TileStairsUp
+			case 'K':
+				out[c] = TileDungeonKey
+			case '+':
+				out[c] = TileLockedDoor
+			case '%':
+				out[c] = TileGoal
 			default:
 				out[c] = TileFloor
 			}
@@ -188,18 +208,73 @@ var rawRooms = map[RoomID][]string{
 		"#..................................#",
 		"#..................................#",
 		"#..................................#",
-		"#................o.................#",
+		"#.............>....................#",
 		"#..................................#",
 		"####################################",
 	},
 }
 
-func LoadWorld() map[RoomID]RoomData {
-	world := make(map[RoomID]RoomData, len(rawRooms))
-	for id, raw := range rawRooms {
-		norm := normalizeRoomLines(raw)
+// Three-room mini-dungeon: entry (<), key room (K), boss + door (+) + goal (%).
+var rawDungeonRooms = map[RoomID][]string{
+	{0, 0}: {
+		"####################################",
+		"#<.................................#",
+		"#..................................#",
+		"#..................................#",
+		"#..................................#",
+		"#..................................#",
+		"#..................................#",
+		"#..................................#",
+		"#..................................#",
+		"####################################",
+	},
+	{1, 0}: {
+		"####################################",
+		"#..................................#",
+		"#......K...........................#",
+		"#..................................#",
+		"#....o.............................#",
+		"#..................................#",
+		"#..................................#",
+		"#..................................#",
+		"#..................................#",
+		"####################################",
+	},
+	{2, 0}: {
+		"####################################",
+		"#..................................#",
+		"#..................................#",
+		"#..+...............................#",
+		"#..o...............................#",
+		"#..o...............................#",
+		"#..................................#",
+		"#........................%.........#",
+		"#..................................#",
+		"####################################",
+	},
+}
+
+func loadRoomMap(raw map[RoomID][]string) map[RoomID]RoomData {
+	world := make(map[RoomID]RoomData, len(raw))
+	for id, lines := range raw {
+		norm := normalizeRoomLines(lines)
 		tiles, spawns := parseRoom(norm)
 		world[id] = RoomData{Tiles: tiles, EnemySpawns: spawns}
 	}
 	return world
+}
+
+// LoadOverworld returns the surface map (includes dungeon entrance `>`).
+func LoadOverworld() map[RoomID]RoomData {
+	return loadRoomMap(rawRooms)
+}
+
+// LoadDungeon returns the cave map (stairs up `<`, key `K`, door `+`, goal `%`).
+func LoadDungeon() map[RoomID]RoomData {
+	return loadRoomMap(rawDungeonRooms)
+}
+
+// LoadWorld is kept for tests; returns the overworld only.
+func LoadWorld() map[RoomID]RoomData {
+	return LoadOverworld()
 }

@@ -29,6 +29,7 @@ type Player struct {
 	InvulnFrames  int
 	SwordTimer    int
 	SwordCooldown int
+	HasDungeonKey bool
 }
 
 type Enemy struct {

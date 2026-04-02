@@ -6,38 +6,61 @@ import (
 )
 
 type State struct {
-	World        map[RoomID]RoomData
-	Room         RoomID
+	Overworld map[RoomID]RoomData
+	Dungeon   map[RoomID]RoomData
+	Realm     Realm
+	Room      RoomID
+
 	Player       Player
-	RoomEntities map[RoomID]*RoomEntities
-	Tick         int
-	Message      string
-	GameOver     bool
+	RoomEntities map[RoomLoc]*RoomEntities
+	Runtimes     map[RoomLoc]RoomRuntime
+
+	OWReturnRoom RoomID
+	OWReturnRow  int
+	OWReturnCol  int
+
+	Tick     int
+	Message  string
+	GameOver bool
+	Victory  bool
+}
+
+func (s *State) roomLoc() RoomLoc {
+	return RoomLoc{Realm: s.Realm, Room: s.Room}
+}
+
+func (s *State) activeWorld() map[RoomID]RoomData {
+	if s.Realm == RealmDungeon {
+		return s.Dungeon
+	}
+	return s.Overworld
 }
 
 func NewState() *State {
-	world := LoadWorld()
-	start := RoomID{1, 1}
-	rd := world[start]
+	s := &State{
+		Overworld:    LoadOverworld(),
+		Dungeon:      LoadDungeon(),
+		Realm:        RealmOverworld,
+		Room:         RoomID{1, 1},
+		RoomEntities: make(map[RoomLoc]*RoomEntities),
+		Runtimes:     make(map[RoomLoc]RoomRuntime),
+	}
+	rd := s.Overworld[s.Room]
 	pr, pc := RoomInnerH/2, RoomInnerW/2
 	if TileBlocksMove(rd.Tiles[pr][pc]) {
 		pr, pc = 5, 18
 	}
-	s := &State{
-		World:        world,
-		Room:         start,
-		Player:       Player{Row: pr, Col: pc, Facing: DirDown, Hearts: StartingHearts},
-		RoomEntities: make(map[RoomID]*RoomEntities),
-	}
-	s.ensureRoomEntities(start)
+	s.Player = Player{Row: pr, Col: pc, Facing: DirDown, Hearts: StartingHearts}
+	s.ensureRoomEntities()
 	return s
 }
 
-func (s *State) ensureRoomEntities(id RoomID) {
-	if _, ok := s.RoomEntities[id]; ok {
+func (s *State) ensureRoomEntities() {
+	loc := s.roomLoc()
+	if _, ok := s.RoomEntities[loc]; ok {
 		return
 	}
-	rd := s.World[id]
+	rd := s.activeWorld()[s.Room]
 	re := &RoomEntities{
 		Enemies:     make([]Enemy, 0, len(rd.EnemySpawns)),
 		Projectiles: nil,
@@ -45,16 +68,37 @@ func (s *State) ensureRoomEntities(id RoomID) {
 	for _, sp := range rd.EnemySpawns {
 		re.Enemies = append(re.Enemies, Enemy{Row: sp[0], Col: sp[1], ShootCooldown: 20})
 	}
-	s.RoomEntities[id] = re
+	s.RoomEntities[loc] = re
 }
 
 func (s *State) CurrentRoomData() RoomData {
-	return s.World[s.Room]
+	return s.activeWorld()[s.Room]
+}
+
+func (s *State) baseTileAt(r, c int) Tile {
+	return s.CurrentRoomData().Tiles[r][c]
+}
+
+// EffectiveTile is the logical tile after pickups and opened doors (dungeon).
+func (s *State) EffectiveTile(r, c int) Tile {
+	t := s.baseTileAt(r, c)
+	if s.Realm != RealmDungeon {
+		return t
+	}
+	loc := s.roomLoc()
+	rt := s.Runtimes[loc]
+	if t == TileDungeonKey && rt.KeyTaken {
+		return TileFloor
+	}
+	if t == TileLockedDoor && rt.DoorOpen {
+		return TileFloor
+	}
+	return t
 }
 
 func (s *State) EntitiesHere() *RoomEntities {
-	s.ensureRoomEntities(s.Room)
-	return s.RoomEntities[s.Room]
+	s.ensureRoomEntities()
+	return s.RoomEntities[s.roomLoc()]
 }
 
 func (s *State) InBounds(r, c int) bool {
@@ -65,8 +109,7 @@ func (s *State) blocksAt(r, c int) bool {
 	if !s.InBounds(r, c) {
 		return true
 	}
-	rd := s.CurrentRoomData()
-	return TileBlocksMove(rd.Tiles[r][c])
+	return TileBlocksMove(s.EffectiveTile(r, c))
 }
 
 func (s *State) enemyAt(r, c int) *Enemy {
@@ -80,8 +123,87 @@ func (s *State) enemyAt(r, c int) *Enemy {
 	return nil
 }
 
+func (s *State) handleLockedDoorBump(nr, nc int) {
+	if s.baseTileAt(nr, nc) != TileLockedDoor {
+		return
+	}
+	loc := s.roomLoc()
+	rt := s.Runtimes[loc]
+	if rt.DoorOpen {
+		return
+	}
+	if s.Player.HasDungeonKey {
+		rt.DoorOpen = true
+		s.Runtimes[loc] = rt
+		s.Player.HasDungeonKey = false
+		s.Message = "The door opened!"
+	} else {
+		s.Message = "It's locked."
+	}
+}
+
+func (s *State) afterEnteringTile() {
+	if s.GameOver || s.Victory {
+		return
+	}
+	p := &s.Player
+	r, c := p.Row, p.Col
+	switch s.baseTileAt(r, c) {
+	case TileStairsDown:
+		s.enterDungeon()
+	case TileStairsUp:
+		s.exitDungeonFromStairs()
+	case TileDungeonKey:
+		if s.Realm != RealmDungeon {
+			return
+		}
+		loc := s.roomLoc()
+		rt := s.Runtimes[loc]
+		if rt.KeyTaken {
+			return
+		}
+		rt.KeyTaken = true
+		s.Runtimes[loc] = rt
+		s.Player.HasDungeonKey = true
+		s.Message = "You got a small key!"
+	case TileGoal:
+		if s.Realm != RealmDungeon {
+			return
+		}
+		s.Victory = true
+		s.Message = "You claimed the triforce! Press R to play again."
+	}
+}
+
+func (s *State) enterDungeon() {
+	if s.Realm == RealmDungeon {
+		return
+	}
+	s.OWReturnRoom = s.Room
+	s.OWReturnRow = s.Player.Row
+	s.OWReturnCol = s.Player.Col
+	s.Realm = RealmDungeon
+	s.Room = RoomID{0, 0}
+	s.Player.Row = 5
+	s.Player.Col = 12
+	s.Player.Facing = DirDown
+	s.ensureRoomEntities()
+}
+
+func (s *State) exitDungeonFromStairs() {
+	if s.Realm != RealmDungeon {
+		return
+	}
+	s.Realm = RealmOverworld
+	s.Room = s.OWReturnRoom
+	s.Player.Row = s.OWReturnRow
+	s.Player.Col = s.OWReturnCol
+	s.Player.Facing = DirDown
+	s.ensureRoomEntities()
+}
+
 func (s *State) MovePlayer(d Dir) {
-	if s.GameOver {
+	if s.GameOver || s.Victory {
 		return
 	}
 	p := &s.Player
@@ -92,6 +214,13 @@ func (s *State) MovePlayer(d Dir) {
 		s.transitionRoom(d)
 		return
 	}
+	if s.baseTileAt(nr, nc) == TileLockedDoor {
+		rt := s.Runtimes[s.roomLoc()]
+		if !rt.DoorOpen {
+			s.handleLockedDoorBump(nr, nc)
+			return
+		}
+	}
 	if s.blocksAt(nr, nc) {
 		return
 	}
@@ -99,46 +228,45 @@ func (s *State) MovePlayer(d Dir) {
 		return
 	}
 	p.Row, p.Col = nr, nc
+	s.afterEnteringTile()
 }
 
 func (s *State) transitionRoom(exitDir Dir) {
 	rx, ry := s.Room.X, s.Room.Y
 	p := &s.Player
-	next := s.Room
+	w := s.activeWorld()
+	var next RoomID
 	switch exitDir {
 	case DirUp:
 		next = RoomID{rx, ry - 1}
-		if _, ok := s.World[next]; ok {
-			s.Room = next
-			p.Row = RoomInnerH - 2
-			s.ensureRoomEntities(next)
-		}
 	case DirDown:
 		next = RoomID{rx, ry + 1}
-		if _, ok := s.World[next]; ok {
-			s.Room = next
-			p.Row = 1
-			s.ensureRoomEntities(next)
-		}
 	case DirLeft:
 		next = RoomID{rx - 1, ry}
-		if _, ok := s.World[next]; ok {
-			s.Room = next
-			p.Col = RoomInnerW - 2
-			s.ensureRoomEntities(next)
-		}
 	case DirRight:
 		next = RoomID{rx + 1, ry}
-		if _, ok := s.World[next]; ok {
-			s.Room = next
-			p.Col = 1
-			s.ensureRoomEntities(next)
-		}
+	default:
+		return
 	}
+	if _, ok := w[next]; !ok {
+		return
+	}
+	s.Room = next
+	switch exitDir {
+	case DirUp:
+		p.Row = RoomInnerH - 2
+	case DirDown:
+		p.Row = 1
+	case DirLeft:
+		p.Col = RoomInnerW - 2
+	case DirRight:
+		p.Col = 1
+	}
+	s.ensureRoomEntities()
 }
 
 func (s *State) SwingSword() {
-	if s.GameOver {
+	if s.GameOver || s.Victory {
 		return
 	}
 	p := &s.Player
@@ -166,7 +294,7 @@ func (s *State) swordCells() [][2]int {
 }
 
 func (s *State) Update() {
-	if s.GameOver {
+	if s.GameOver || s.Victory {
 		return
 	}
 	s.Tick++
@@ -206,7 +334,6 @@ func (s *State) Update() {
 }
 
 func (s *State) updateEnemies(re *RoomEntities) {
-	rd := s.CurrentRoomData()
 	p := &s.Player
 	for i := range re.Enemies {
 		e := &re.Enemies[i]
@@ -222,7 +349,7 @@ func (s *State) updateEnemies(re *RoomEntities) {
 				if !s.InBounds(nr, nc) {
 					continue
 				}
-				if TileBlocksMove(rd.Tiles[nr][nc]) {
+				if s.blocksAt(nr, nc) {
 					continue
 				}
 				if nr == p.Row && nc == p.Col {
@@ -299,7 +426,6 @@ func abs(x int) int {
 }
 
 func (s *State) updateProjectiles(re *RoomEntities) {
-	rd := s.CurrentRoomData()
 	p := &s.Player
 	kept := re.Projectiles[:0]
 	for i := range re.Projectiles {
@@ -315,7 +441,7 @@ func (s *State) updateProjectiles(re *RoomEntities) {
 		if !s.InBounds(ri, ci) {
 			continue
 		}
-		if TileBlocksMove(rd.Tiles[ri][ci]) {
+		if s.blocksAt(ri, ci) {
 			continue
 		}
 		if ri == p.Row && ci == p.Col && p.InvulnFrames <= 0 {
@@ -336,11 +462,18 @@ func (s *State) updateProjectiles(re *RoomEntities) {
 
 func (s *State) Reset() {
 	n := NewState()
-	s.World = n.World
+	s.Overworld = n.Overworld
+	s.Dungeon = n.Dungeon
+	s.Realm = n.Realm
 	s.Room = n.Room
 	s.Player = n.Player
 	s.RoomEntities = n.RoomEntities
+	s.Runtimes = n.Runtimes
+	s.OWReturnRoom = n.OWReturnRoom
+	s.OWReturnRow = n.OWReturnRow
+	s.OWReturnCol = n.OWReturnCol
 	s.Tick = 0
 	s.Message = ""
 	s.GameOver = false
+	s.Victory = false
 }

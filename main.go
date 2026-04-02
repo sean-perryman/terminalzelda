@@ -91,7 +91,7 @@ func handleKey(st *game.State, ev *tcell.EventKey) bool {
 		}
 	}
 
-	if st.GameOver {
+	if st.GameOver || st.Victory {
 		return false
 	}
 
@@ -129,6 +129,16 @@ func tileRune(t game.Tile) rune {
 		return '~'
 	case game.TileBush:
 		return '*'
+	case game.TileStairsDown:
+		return '>'
+	case game.TileStairsUp:
+		return '<'
+	case game.TileDungeonKey:
+		return 'K'
+	case game.TileLockedDoor:
+		return '+'
+	case game.TileGoal:
+		return '%'
 	default:
 		return '.'
 	}
@@ -167,7 +177,12 @@ func draw(sc tcell.Screen, st *game.State) {
 
 	sc.Clear()
 
-	title := fmt.Sprintf(" Terminal Zelda — overworld room (%d, %d) ", st.Room.X, st.Room.Y)
+	var title string
+	if st.Realm == game.RealmDungeon {
+		title = fmt.Sprintf(" Dungeon — room (%d, %d) ", st.Room.X, st.Room.Y)
+	} else {
+		title = fmt.Sprintf(" Terminal Zelda — overworld (%d, %d) ", st.Room.X, st.Room.Y)
+	}
 	titleStyle := tcell.StyleDefault.Foreground(tcell.ColorWhite)
 	drawString(sc, max(0, (w-len(title))/2), 0, titleStyle, title, w)
 
@@ -190,6 +205,9 @@ func draw(sc tcell.Screen, st *game.State) {
 		hud += "\u00b7"
 	}
 	hud += "  "
+	if p.HasDungeonKey {
+		hud += "[k] "
+	}
 	if st.Message != "" {
 		hud += st.Message
 	}
@@ -197,7 +215,6 @@ func draw(sc tcell.Screen, st *game.State) {
 
 	offR := 3
 	offC := max(0, (w-game.RoomInnerW)/2)
-	rd := st.CurrentRoomData()
 	re := st.EntitiesHere()
 
 	projCells := make(map[[2]int]struct{})
@@ -228,10 +245,13 @@ func draw(sc tcell.Screen, st *game.State) {
 	yellow := tcell.StyleDefault.Foreground(tcell.ColorYellow)
 	white := tcell.StyleDefault.Foreground(tcell.ColorWhite)
 	red := tcell.StyleDefault.Foreground(tcell.ColorRed)
+	dimFloor := tcell.StyleDefault.Foreground(tcell.ColorTeal)
+	dungeonWall := tcell.StyleDefault.Foreground(tcell.ColorFuchsia)
+	dungeonAccent := tcell.StyleDefault.Foreground(tcell.ColorPurple)
 
 	for r := 0; r < game.RoomInnerH; r++ {
 		for c := 0; c < game.RoomInnerW; c++ {
-			t := rd.Tiles[r][c]
+			t := st.EffectiveTile(r, c)
 			ch := tileRune(t)
 			stl := green
 			switch t {
@@ -241,18 +261,53 @@ func draw(sc tcell.Screen, st *game.State) {
 				stl = green
 			case game.TileWall:
 				stl = yellow
+			case game.TileStairsDown, game.TileStairsUp:
+				stl = yellow
+			case game.TileDungeonKey:
+				stl = yellow
+			case game.TileLockedDoor:
+				stl = red
+			case game.TileGoal:
+				stl = yellow
+			}
+			if st.Realm == game.RealmDungeon {
+				switch t {
+				case game.TileFloor:
+					stl = dimFloor
+				case game.TileWall:
+					stl = dungeonWall
+				case game.TileWater:
+					stl = cyan
+				case game.TileBush:
+					stl = dimFloor
+				case game.TileStairsDown, game.TileStairsUp:
+					stl = dungeonAccent
+				case game.TileDungeonKey:
+					stl = yellow
+				case game.TileLockedDoor:
+					stl = red
+				case game.TileGoal:
+					stl = yellow.Bold(true)
+				}
 			}
 
 			x, y := offC+c, offR+r
 			if r == p.Row && c == p.Col {
 				if p.InvulnFrames > 0 && (st.Tick/3)%2 == 0 {
 					ch = tileRune(t)
-					stl = green
+					stl = dimFloor
+					if st.Realm != game.RealmDungeon {
+						stl = green
+					}
 					switch t {
 					case game.TileWater:
 						stl = cyan
 					case game.TileWall:
-						stl = yellow
+						if st.Realm == game.RealmDungeon {
+							stl = dungeonWall
+						} else {
+							stl = yellow
+						}
 					case game.TileBush:
 						stl = green
 					}
@@ -281,6 +336,11 @@ func draw(sc tcell.Screen, st *game.State) {
 		goMsg := " GAME OVER "
 		stGo := tcell.StyleDefault.Foreground(tcell.ColorRed).Bold(true)
 		drawString(sc, max(0, (w-len(goMsg))/2), offR+game.RoomInnerH+1, stGo, goMsg, w)
+	}
+	if st.Victory {
+		winMsg := " YOU WIN "
+		stWin := tcell.StyleDefault.Foreground(tcell.ColorYellow).Bold(true)
+		drawString(sc, max(0, (w-len(winMsg))/2), offR+game.RoomInnerH+1, stWin, winMsg, w)
 	}
 }
 
